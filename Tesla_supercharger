@@ -1,0 +1,119 @@
+#-*-coding: utf-8 -*-
+
+import requests
+import pandas as pd
+from bs4 import BeautifulSoup
+import random
+import re
+import sys
+
+if not sys.warnoptions:
+    import warnings
+    warnings.simplefilter("ignore")
+
+def get_pagecode(url):
+    user = [
+        "Mozilla/5.0 (Windows NT 6.3; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.153 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 6.1; WOW64; rv:30.0) Gecko/20100101 Firefox/30.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.75.14 (KHTML, like Gecko) Version/7.0.3 Safari/537.75.14",
+        "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.2; Win64; x64; Trident/6.0)"
+    ]
+
+    proxy_list = [
+        '183.95.80.102:8080',
+        '123.160.31.71:8080',
+        '115.231.128.79:8080',
+        '166.111.77.32:80',
+        '43.240.138.31:8080',
+        '218.201.98.196:3128'
+    ]
+
+    header = {
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+        'accept-encoding': 'gzip, deflate, br',
+        'accept-language': 'en,zh-CN;q=0.9,zh;q=0.8,en-US;q=0.7',
+        'cache-control': 'max-age=0',
+        'proxy': random.choice(proxy_list),
+        'referer': 'https://www.tesla.cn/supercharger',
+        'user-agent': random.choice(user)
+    }
+    r = requests.get(url, headers=header, verify=False)
+    return r
+
+def get_supercharger_content(url, province, supercharger):
+    r = get_pagecode(url)
+    if r.status_code == 200:
+        response = r.text
+        soup = BeautifulSoup(response, 'html.parser')
+        temp = soup.find_all("section", {"class": "find-us-list-state"})[0]
+        for item in temp.find_all('address', {"class": "vcard"}):
+            one_note = []
+            one_note.append(province)
+            if item.find('a'):
+                if item.find('a').get('href'):
+                    number = get_charger_number_SC(item.find('a').get('href'))
+                if item.find('a').text:
+                    title = item.find('a').text
+                else:
+                    title = None
+            else:
+                title = None
+
+            one_note.append(title)
+
+            if item.find('span', {'class': 'street-address'}):
+                if item.find('span', {'class': 'street-address'}).text:
+                    address = item.find('span', {'class': 'street-address'}).text
+                else:
+                    address = None
+            else:
+                address = None
+            one_note.append(address)
+
+            if item.find('span', {'class': 'locality'}):
+                if item.find('span', {'class': 'locality'}).text:
+                    locality = item.find('span', {'class': 'locality'}).text
+                else:
+                    locality = None
+            else:
+                locality = None
+            one_note.append(locality)
+            one_note.append(number)
+            supercharger.loc[len(supercharger)] = one_note
+    return supercharger
+
+
+def get_charger_number_SC(url):
+    full_url = 'https://www.tesla.cn' + str(url)
+    r = get_pagecode(full_url)
+    if r.status_code == 200:
+        response = r.text
+        soup = BeautifulSoup(response, 'html.parser')
+        text = re.compile('\d+\个超级充电桩')
+        if soup.find(text=text):
+            number = soup.find(text=text).split('个')[0]
+            print(number)
+        else:
+            number = None
+    return number
+
+def main():
+    writer = pd.ExcelWriter('Tesla Charger Tracker.xlsx')
+    supercharger = pd.DataFrame(columns=['province', 'title', 'address', 'locality', 'charging piles'])
+    supercharger_ex = pd.DataFrame(columns=['province', 'title', 'address', 'locality', 'charging piles'])
+    for province in [u'安徽', u'北京', u'福建', u'广东', u'河北', u'河南', u'湖南', u'江苏', u'辽宁', u'山东', u'甘肃', u'陕西', u'上海',
+                     u'四川', u'天津', u'浙江', u'重庆', u'吉林', u'海南', u'贵州', u'黑龙江', u'湖北', u'内蒙古', u'山西', u'广西', u'云南',
+                     u'江西', u'宁夏']:
+        url = 'https://www.tesla.cn/findus/list/superchargers/%s' % (province)
+        get_supercharger_content(url, province, supercharger)
+
+    for province in [u'香港', u'澳门', u'台湾']:
+        url = 'https://www.tesla.cn/findus/list/superchargers/%s' % (province)
+        get_supercharger_content(url, province, supercharger_ex)
+    current_sc = supercharger[-supercharger['title'].str.contains(u'即将开放')]
+    upcoming_sc = supercharger[supercharger['title'].str.contains(u'即将开放')]
+    current_sc.to_excel(writer, 'Current SC')
+    upcoming_sc.to_excel(writer, 'Upcoming SC')
+    supercharger_ex.to_excel(writer, 'SC (HK, Taiwan, Macao)')
+    writer.save()
